@@ -63,12 +63,35 @@ def AvgPoolDenseBlock(in_channels, out_channels, nb_layers=4):
     return nn.Sequential(nn.MaxPool2d(kernel_size=2, stride=2, padding=0, ceil_mode=True),
                          DenseBlock(in_channels, out_channels, nb_layers))
 
-def Conv1dDenseBlock(in_channels, out_channels, nb_layers=4):
-    return nn.Sequential(nn.Conv1d(in_channels, in_channels, kernel_size=3, padding=2), 
-                         nn.BatchNorm1d(in_channels),
-                         nn.ELU(),
-                         nn.MaxPool1d(kernel_size=3, stride=2, padding=1),
-                         DenseBlock(in_channels, out_channels, nb_layers))
+# def Conv1dDenseBlock(in_channels, out_channels, nb_layers=4):
+#     return nn.Sequential(nn.Conv1d(in_channels, in_channels, kernel_size=3, padding=2), 
+#                          nn.BatchNorm1d(in_channels),
+#                          nn.ELU(),
+#                          nn.MaxPool2d(kernel_size=2, stride=2, padding=0, ceil_mode=True),
+#                          DenseBlock(in_channels, out_channels, nb_layers))
+
+class Conv1dDenseBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, W, nb_layers=4):
+        super().__init__()
+        # self.conv1d = nn.Conv1d(self.H*self.W, self.H*self.W, kernel_size=3, padding=2)
+        self.conv1d = nn.Conv1d(W*W, W*W, kernel_size=3, padding=1)
+        self.batchnorm = nn.BatchNorm1d(W*W)
+        self.elu = nn.ELU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=2, stride=2, padding=0, ceil_mode=True)
+        self.denseblock = DenseBlock(in_channels, out_channels, nb_layers)
+        
+
+
+    def forward(self, x):
+        N, C, H, W = x.shape
+        x = x.reshape(N, C, H*W).permute(0,2,1)
+        x = self.conv1d(x)
+        x = self.batchnorm(x)
+        x = self.elu(x)
+        x = x.permute(0,2,1).reshape(N, C, H, W)
+        x = self.maxpool(x)
+        x = self.denseblock(x)
+        return x
 
 class UpConvBlock(nn.Module):
     def __init__(self, in_channels, out_channels):
@@ -91,13 +114,13 @@ class Net1(nn.Module):
         #self.counter = (torch.zeros(1, requires_grad=False)-1).cuda()
         
         self.enc1 = DenseBlock(in_channels, 64, 4)
-        self.enc2 = Conv1dDenseBlock(64, 96, 4)
-        self.enc3 = Conv1dDenseBlock(96, 128, 4)
-        self.enc4 = Conv1dDenseBlock(128, 128, 4)
-        self.enc5 = Conv1dDenseBlock(128, 128, 4)
-        self.enc6 = Conv1dDenseBlock(128, 128, 4)
-        self.enc7 = Conv1dDenseBlock(128, 128, 4)
-        self.enc8 = Conv1dDenseBlock(128, 128, 4)
+        self.enc2 = AvgPoolDenseBlock(64, 96, 4)
+        self.enc3 = AvgPoolDenseBlock(96, 128, 4)
+        self.enc4 = AvgPoolDenseBlock(128, 128, 4)
+        self.enc5 = Conv1dDenseBlock(128, 128, 32, 4)
+        self.enc6 = Conv1dDenseBlock(128, 128, 16, 4)
+        self.enc7 = Conv1dDenseBlock(128, 128, 8, 4)
+        self.enc8 = Conv1dDenseBlock(128, 128, 4, 4)
         
         self.bridge = ConvBlock(128, 128)
         
@@ -208,7 +231,7 @@ def leaderboard_loss2(output, target):
     
     # target[:,:,2,...] = target[:,:,2,...].clamp(0.003, 0.997)
     
-    temp_mse = temp_loss(output, target)
+    # temp_mse = temp_loss(output, target)
     #temp_mse = (1/0.03163512)*F.mse_loss(output[:,:,0,...],target[:,:,0,...])
     # temp_mse = (1/0.03163512)*temp_loss(output,target)
     # crr_mse  = (1/0.00024158)*F.mse_loss(output[:,:,1,...],target[:,:,1,...])
