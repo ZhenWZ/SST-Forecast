@@ -23,21 +23,21 @@ class MyDataset(Dataset):
 
         # Generate index of the dataset
         if mode == "train":
-            self.length = np.floor((self.split_idx-self.channel_length)/steps + 1).astype(int)
+            self.length = np.floor((self.split_idx-self.channel_length*skip)/steps + 1).astype(int)
             self.data_idx = np.zeros((self.length, self.channel_length), dtype=int)
 
             for i in range(self.length):
-                self.data_idx[i] = np.arange(i*steps, i*steps+self.channel_length, 1, dtype=int)
+                self.data_idx[i] = np.arange(i*steps, i*steps+self.channel_length*skip, skip, dtype=int)
 
             self.x_idx = self.data_idx[:, :in_channels]
             self.y_idx = self.data_idx[:, in_channels:]
 
         else:
-            self.length = np.floor((self.dataset.shape[0]-self.split_idx-self.channel_length)/steps + 1).astype(int)
+            self.length = np.floor((self.dataset.shape[0]-self.split_idx-self.channel_length*skip)/steps + 1).astype(int)
             self.data_idx = np.zeros((self.length, self.channel_length), dtype=int)
 
             for i in range(self.length):
-                self.data_idx[i] = np.arange(self.split_idx+i*steps, self.split_idx+i*steps+self.channel_length, 1, dtype=int)
+                self.data_idx[i] = np.arange(self.split_idx+i*steps, self.split_idx+i*steps+self.channel_length*skip, skip, dtype=int)
 
             self.x_idx = self.data_idx[:, :in_channels]
             self.y_idx = self.data_idx[:, in_channels:]

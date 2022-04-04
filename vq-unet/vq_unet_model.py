@@ -202,7 +202,7 @@ class VQ_Unet(pl.LightningModule):
         loss_recons = F.mse_loss(x_hat, y)
         loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
         loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
-        loss = loss_recons + loss_vq + 1.0 * loss_commit
+        loss = loss_recons + (loss_vq + 1.0 * loss_commit)*30
         self.log('train_loss', loss)
         return loss
     
@@ -212,7 +212,7 @@ class VQ_Unet(pl.LightningModule):
         loss_recons = F.mse_loss(x_hat, y)
         loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
         loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
-        loss = loss_recons + loss_vq + 1.0 * loss_commit
+        loss = loss_recons + (loss_vq + 1.0 * loss_commit)*30
         self.log('val_loss', loss)
         self.log('mse_loss', loss_recons)
 

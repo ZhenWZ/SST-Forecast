@@ -2,6 +2,7 @@
 *.ipynb_checkpoints
 */snapshots/*
 */logs/*
+*/log/*
 __pycache__/
 checkpoints/
 lightning_logs/
@@ -14,6 +15,9 @@ data/*/R*
 *.csv
 *.mat
 *.pth
+*/results/*
+*/runs/*
+*/weights*/*
 
 
 # Byte-compiled / optimized / DLL files

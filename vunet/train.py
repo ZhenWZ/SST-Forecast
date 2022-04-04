@@ -30,6 +30,57 @@ batch_size = 8
 device = 'cuda'
 folder_to_save_models = 'weights_32-32_epoch100'
 
+def train(model, device, train_loader, optimizer, epoch):
+    # set model as training mode
+    model.train()
+
+    loss, mse_loss = [], []
+    all_output, all_mean, all_log_var = [], [], []
+
+    for batch_idx, (data, target) in enumerate(train_loader):
+        data, target = data.to(device), target.to(device)
+        optimizer.zero_grad()
+        output = model(data)
+        loss_batch = VUNetLoss2(output, target)
+        loss_batch.backward()
+        mse_loss = F.mse_loss(output[0], target)
+        optimizer.step()
+
+        loss.append(loss_batch.item())
+        mse_loss.append(mse_loss.item())
+        all_output.append(output)
+        all_mean.append(output[1])
+        all_log_var.append(output[2])
+
+        if batch_idx % 100 == 0:
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                epoch, batch_idx * len(data), len(train_loader.dataset),
+                100. * batch_idx / len(train_loader), loss_batch.item()))
+    
+    return all_output, all_mean, all_log_var, np.mean(loss), np.mean(mse_loss)
+
+def validation(model, device, test_loader):
+    # set model as evaluation mode
+    model.eval()
+
+    with torch.no_grad():
+        loss, mse_loss = [], []
+        all_output, all_mean, all_log_var = [], [], []
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            loss_batch = VUNetLoss2(output, target)
+            mse_loss = F.mse_loss(output[0], target)
+
+            loss.append(loss_batch.item())
+            mse_loss.append(mse_loss.item())
+            all_output.append(output)
+            all_mean.append(output[1])
+            all_log_var.append(output[2])
+
+    return all_output, all_mean, all_log_var, np.mean(loss), np.mean(mse_loss)
+
+
 # DataLoader
 train_dl = FastDataLoader(dataset=train_dataset,
                           bs=batch_size,
