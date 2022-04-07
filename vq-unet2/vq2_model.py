@@ -2,9 +2,9 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from functions import vq, vq_st
 import pytorch_lightning as pl
 import torchvision
+from functions import vq, vq_st
 
 ############################################################################################
 
@@ -66,6 +66,22 @@ class VQEmbedding(nn.Module):
 
     
 ############################################################################################
+class ResBlock(nn.Module):
+    def __init__(self, in_channel, channel):
+        super().__init__()
+
+        self.conv = nn.Sequential(
+            nn.ReLU(),
+            nn.Conv2d(in_channel, channel, 3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channel, in_channel, 1),
+        )
+
+    def forward(self, input):
+        out = self.conv(input)
+        out += input
+
+        return out
 
 class DenseBlock(nn.Module):
     def __init__(self, in_channels, out_channels, nb_layers=4):
@@ -100,6 +116,70 @@ class UpConvBlock(nn.Module):
         x = self.elu(x)
         return torch.cat([x, x_enc], dim=1)
 
+class Encoder(nn.Module):
+    def __init__(self, in_channel, channel, n_res_block, n_res_channel, stride):
+        super().__init__()
+
+        if stride == 4:
+            blocks = [
+                nn.Conv2d(in_channel, channel // 2, 4, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(channel // 2, channel, 4, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(channel, channel, 3, padding=1),
+            ]
+
+        elif stride == 2:
+            blocks = [
+                nn.Conv2d(in_channel, channel // 2, 4, stride=2, padding=1),
+                nn.ReLU(inplace=True),
+                nn.Conv2d(channel // 2, channel, 3, padding=1),
+            ]
+
+        for i in range(n_res_block):
+            blocks.append(ResBlock(channel, n_res_channel))
+
+        blocks.append(nn.ReLU(inplace=True))
+
+        self.blocks = nn.Sequential(*blocks)
+
+    def forward(self, input):
+        return self.blocks(input)
+
+class Decoder(nn.Module):
+    def __init__(
+        self, in_channel, out_channel, channel, n_res_block, n_res_channel, stride
+    ):
+        super().__init__()
+
+        blocks = [nn.Conv2d(in_channel, channel, 3, padding=1)]
+
+        for i in range(n_res_block):
+            blocks.append(ResBlock(channel, n_res_channel))
+
+        blocks.append(nn.ReLU(inplace=True))
+
+        if stride == 4:
+            blocks.extend(
+                [
+                    nn.ConvTranspose2d(channel, channel // 2, 4, stride=2, padding=1),
+                    nn.ReLU(inplace=True),
+                    nn.ConvTranspose2d(
+                        channel // 2, out_channel, 4, stride=2, padding=1
+                    ),
+                ]
+            )
+
+        elif stride == 2:
+            blocks.append(
+                nn.ConvTranspose2d(channel, out_channel, 4, stride=2, padding=1)
+            )
+
+        self.blocks = nn.Sequential(*blocks)
+
+    def forward(self, input):
+        return self.blocks(input)
+
 ############################################################################################
 
 class VQ_Unet(pl.LightningModule):
@@ -120,10 +200,17 @@ class VQ_Unet(pl.LightningModule):
         
         self.bridge = ConvBlock(128, 128)
         
-        self.codebook = VQEmbedding(512, 128)
-        
-        self.dec8 = ConvBlock(128, 128)
-        
+
+        self.enc_t = nn.Conv2d(128, 128, 3, stride=2, padding=1)
+        self.conv_t = nn.Conv2d(128, 64, 1)
+        self.codebook_t = VQEmbedding(512, 64)
+        self.dec_t = nn.ConvTranspose2d(64, 64, [3,4], stride=2, padding=1)
+        # self.dec_t = Decoder(64, 64, 128, 2, 32, 2)
+        self.upsample_t = nn.ConvTranspose2d(64, 64, [3,4], stride=2, padding=1)
+        self.conv_b = nn.Conv2d(64+128, 128, 1)
+        self.codebook_b = VQEmbedding(512, 128)
+
+        self.dec8 = ConvBlock(64+128, 128)
         self.dec7_1 = UpConvBlock(128, 128)
         self.dec7_2 = ConvBlock(128+128, 128)
         self.dec6_1 = UpConvBlock(128, 128)
@@ -163,18 +250,24 @@ class VQ_Unet(pl.LightningModule):
         x5 = self.enc5(x4)
         x6 = self.enc6(x5)
         x7 = self.enc7(x6)
-        x8 = self.enc8(x7)
+        # x8 = self.enc8(x7)
         
-        z_e_x = self.bridge(x8)
+        enc_b = self.bridge(x7)
+        enc_t = self.enc_t(enc_b)
+        z_e_x_t = self.conv_t(enc_t)
+        z_q_x_st_t, z_q_x_t = self.codebook_t.straight_through(z_e_x_t)
+
+        dec_t = self.dec_t(z_q_x_st_t)
+        dec_b = torch.cat([dec_t, enc_b], dim=1)
+        z_e_x_b = self.conv_b(dec_b)
+        z_q_x_st_b, z_q_x_b = self.codebook_b.straight_through(z_e_x_b)
+
+        upsample_t = self.upsample_t(z_q_x_st_t)
+        quant = torch.cat([upsample_t, z_q_x_st_b], dim=1)
+        x100 = self.dec8(quant)
         
-        z_q_x_st, z_q_x = self.codebook.straight_through(z_e_x)
-        # x100 = torch.flatten(x100, start_dim=1)
-        # x100, z_mean, z_logvar  = self.var(x100)
-        # x100 = x100.view(N, -1, 2, 2)
-        x100 = self.dec8(z_q_x_st)
-        
-        x107 = self.dec7_2(self.dec7_1(x100, x7))
-        x106 = self.dec6_2(self.dec6_1(x107, x6))
+        # x107 = self.dec7_2(self.dec7_1(x100, x7))
+        x106 = self.dec6_2(self.dec6_1(x100, x6))
         x105 = self.dec5_2(self.dec5_1(x106, x5))
         x104 = self.dec4_2(self.dec4_1(x105, x4))
         x103 = self.dec3_2(self.dec3_1(x104, x3))
@@ -190,7 +283,7 @@ class VQ_Unet(pl.LightningModule):
         # clamp 'asii_turb_trop_prob'
         # out[:,:,2,...] = 0.003 + (0.997 - 0.003) * torch.sigmoid(out[:,:,2,...])
         
-        return out, z_e_x, z_q_x
+        return out, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t
         #return out.view(N, self.out_channels, H, W), z_mean, z_logvar, self.counter
     
     def configure_optimizers(self):
@@ -201,37 +294,38 @@ class VQ_Unet(pl.LightningModule):
 
     def training_step(self, train_batch, batch_idx):
         x, y = train_batch
-        x_hat, z_e_x, z_q_x = self.forward(x)
+        x_hat, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t  = self.forward(x)
         loss_recons = F.mse_loss(x_hat, y)
-        loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
-        loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
-        loss = loss_recons + (loss_vq + 1.0 * loss_commit)
+        loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
+        loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
+        loss = 100*loss_recons + loss_vq + 1.0 * loss_commit
         self.log('train_loss', loss)
+        self.log('train_mse_loss', loss_recons)
         # self.logger.experiment.add_image('Train/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
         # self.logger.experiment.add_image('Train/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
         return loss
     
     def validation_step(self, val_batch, batch_idx):
         x, y = val_batch
-        x_hat, z_e_x, z_q_x = self.forward(x)
+        x_hat, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t  = self.forward(x)
         loss_recons = F.mse_loss(x_hat, y)
-        loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
-        loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
-        loss = loss_recons + (loss_vq + 1.0 * loss_commit)
+        loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
+        loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
+        loss = loss_recons + loss_vq + 1.0 * loss_commit
         self.log('val_loss', loss)
-        self.log('mse_loss', loss_recons)
+        self.log('val_mse_loss', loss_recons)
         # self.logger.experiment.add_image('Validate/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
         # self.logger.experiment.add_image('Validate/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
     
     def test_step(self, test_batch, batch_idx):
         x, y = test_batch
-        x_hat, z_e_x, z_q_x = self.forward(x)
+        x_hat, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t  = self.forward(x)
         loss_recons = F.mse_loss(x_hat, y)
-        loss_vq = F.mse_loss(z_q_x, z_e_x.detach())
-        loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
-        loss = loss_recons + (loss_vq + 1.0 * loss_commit)
-        self.log('val_loss', loss)
-        self.log('mse_loss', loss_recons)
+        loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
+        loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
+        loss = loss_recons + loss_vq + 1.0 * loss_commit
+        self.log('test_loss', loss)
+        self.log('test_mse_loss', loss_recons)
         # self.logger.experiment.add_image('Test/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
         # self.logger.experiment.add_image('Test/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
 

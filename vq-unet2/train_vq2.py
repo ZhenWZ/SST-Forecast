@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from data_utils import *
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
-from vq_unet_model import VQ_Unet
+from vq2_model import VQ_Unet
 
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
@@ -36,9 +36,8 @@ if __name__ == '__main__':
     model = VQ_Unet(in_channels=args.in_channels,out_channels=args.out_channels)
     logger = TensorBoardLogger("log", name=args.log_name)
     callbacks = [
-        EarlyStopping(monitor='mse_loss', patience=20, mode='min', check_on_train_epoch_end=False), 
-        CSVLogger("csvlogs", name="vqunet-16-4-5-fullscale"),
-        ModelCheckpoint(dirpath=args.checkpoint_name, filename='vqunet-16-4-5-{epoch:02d}-{val_loss:.2f}', monitor='mse_loss', mode='min', save_top_k=3, verbose=True)
+        EarlyStopping(monitor='val_mse_loss', patience=10, mode='min', check_on_train_epoch_end=False), 
+        ModelCheckpoint(dirpath=args.checkpoint_name, filename='vq2-16-4-5-{epoch:02d}-{val_loss:.2f}', monitor='val_mse_loss', mode='min', save_top_k=5, verbose=True)
         ]
-    trainer = pl.Trainer(gpus=1, callbacks=callbacks, logger=logger)
+    trainer = pl.Trainer(gpus=1, callbacks=callbacks, logger=logger, max_epochs=80)
     trainer.fit(model, train_loader, val_loader)
