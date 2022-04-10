@@ -194,7 +194,7 @@ class VQ_Unet(pl.LightningModule):
         #return out.view(N, self.out_channels, H, W), z_mean, z_logvar, self.counter
     
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-4, weight_decay=1e-6)
+        optimizer = torch.optim.Adam(self.parameters(), lr=2e-4, weight_decay=2e-6)
         StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2000], gamma=0.5)
         optim_dict = {'optimizer': optimizer, 'lr_scheduler': StepLR}
         return optim_dict
@@ -207,6 +207,7 @@ class VQ_Unet(pl.LightningModule):
         loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
         loss = loss_recons + (loss_vq + 1.0 * loss_commit)
         self.log('train_loss', loss)
+        self.log('train_mse', loss_recons)
         # self.logger.experiment.add_image('Train/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
         # self.logger.experiment.add_image('Train/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
         return loss
@@ -219,7 +220,7 @@ class VQ_Unet(pl.LightningModule):
         loss_commit = F.mse_loss(z_e_x, z_q_x.detach())
         loss = loss_recons + (loss_vq + 1.0 * loss_commit)
         self.log('val_loss', loss)
-        self.log('mse_loss', loss_recons)
+        self.log('val_mse', loss_recons)
         # self.logger.experiment.add_image('Validate/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
         # self.logger.experiment.add_image('Validate/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
     
