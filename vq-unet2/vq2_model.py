@@ -202,15 +202,15 @@ class VQ_Unet(pl.LightningModule):
         
 
         self.enc_t = nn.Conv2d(128, 128, 3, stride=2, padding=1)
-        self.conv_t = nn.Conv2d(128, 64, 1)
-        self.codebook_t = VQEmbedding(512, 64)
-        self.dec_t = nn.ConvTranspose2d(64, 64, [3,4], stride=2, padding=1)
+        self.conv_t = nn.Conv2d(128, 128, 1)
+        self.codebook_t = VQEmbedding(512, 128)
+        self.dec_t = nn.ConvTranspose2d(128, 128, [3,4], stride=2, padding=1)
         # self.dec_t = Decoder(64, 64, 128, 2, 32, 2)
-        self.upsample_t = nn.ConvTranspose2d(64, 64, [3,4], stride=2, padding=1)
-        self.conv_b = nn.Conv2d(64+128, 128, 1)
+        self.upsample_t = nn.ConvTranspose2d(128, 128, [3,4], stride=2, padding=1)
+        self.conv_b = nn.Conv2d(128+128, 128, 1)
         self.codebook_b = VQEmbedding(512, 128)
 
-        self.dec8 = ConvBlock(64+128, 128)
+        self.dec8 = ConvBlock(128+128, 128)
         self.dec7_1 = UpConvBlock(128, 128)
         self.dec7_2 = ConvBlock(128+128, 128)
         self.dec6_1 = UpConvBlock(128, 128)
@@ -298,7 +298,7 @@ class VQ_Unet(pl.LightningModule):
         loss_recons = F.mse_loss(x_hat, y)
         loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
         loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
-        loss = 100*loss_recons + loss_vq + 1.0 * loss_commit
+        loss = loss_recons + loss_vq + 1.0 * loss_commit
         self.log('train_loss', loss)
         self.log('train_mse_loss', loss_recons)
         # self.logger.experiment.add_image('Train/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
