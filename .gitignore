@@ -15,7 +15,6 @@ data/*/R*
 *.csv
 *.mat
 *.pth
-*/results/*
 */runs/*
 */weights*/*
 

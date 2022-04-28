@@ -329,102 +329,161 @@ class VQ_Unet(pl.LightningModule):
         # self.logger.experiment.add_image('Test/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
         # self.logger.experiment.add_image('Test/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
 
-
-def logit(x):
-    return torch.log(x / (1. - x))
-
-def norm_logit(x, M=0.997, m=0.003):
-    
-    x = logit(x)
-    
-    M = -logit(torch.tensor(m))
-    x += M
-    x /= 2*M
-    
-    return x
-    
-def leaderboard_loss(output, target):
-    
-    # target[:,:,2,...] = target[:,:,2,...].clamp(0.003, 0.997)
-    
-    temp_mse = F.mse_loss(output, target)
-    # temp_mse = (1/0.03163512)*F.mse_loss(output,target)
-    # crr_mse  = (1/0.00024158)*F.mse_loss(output[:,:,1,...],target[:,:,1,...])
-    # prob_mse = (1/0.00703378)*F.mse_loss(norm_logit(output[:,:,2,...]), norm_logit(target[:,:,2,...]))
-    # cma_mse  = (1/0.19160305)*F.mse_loss(output[:,:,3,...],target[:,:,3,...])
-    
-    # return (temp_mse + crr_mse + prob_mse + cma_mse)/4
-    return temp_mse
-
-def temp_loss(output, target):
-    mask = (target>0)
-    loss = F.mse_loss(torch.masked_select(output, mask), torch.masked_select(target, mask))
-    return loss
-
-def leaderboard_loss2(output, target):
-    
-    # target[:,:,2,...] = target[:,:,2,...].clamp(0.003, 0.997)
-    
-    #temp_mse = (1/0.03163512)*F.mse_loss(output[:,:,0,...],target[:,:,0,...])
-    # temp_mse = (1/0.03163512)*temp_loss(output,target)
-    # crr_mse  = (1/0.00024158)*F.mse_loss(output[:,:,1,...],target[:,:,1,...])
-    # prob_mse = (1/0.00703378)*F.mse_loss(norm_logit(output[:,:,2,...]), norm_logit(target[:,:,2,...]))
-    # cma_mse  = (1/0.19160305)*F.mse_loss(output[:,:,3,...],target[:,:,3,...])
-
-    temp_mse = temp_loss(output,target)
-    
-    # return (temp_mse + crr_mse + prob_mse + cma_mse)/4
-    return temp_mse
-
-def VUNetLoss(output, target):
-    
-    # L2 loss
-    loss_L2 = leaderboard_loss(output[0], target)
-    
-    # VAE penalty
-    N = target.shape[-1]
-    
-    mu = output[1]
-    log_var = output[2]
-    #loss_KL = ((1 / N) * (torch.exp(z_var) + torch.square(z_mean) - 1. - z_var).sum(dim=-1)).mean()
-    loss_KL = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
-    
-    #if verbose: print(loss_L2, loss_KL)
+class VQ_Unet2(pl.LightningModule):
+    def __init__(self, in_channels=12, out_channels=12):
+        super().__init__()
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        #self.counter = (torch.zeros(1, requires_grad=False)-1).cuda()
         
-    return loss_L2 + 40*loss_KL
+        self.enc1 = DenseBlock(in_channels, 64, 4)
+        self.enc2 = AvgPoolDenseBlock(64, 96, 4)
+        self.enc3 = AvgPoolDenseBlock(96, 128, 4)
+        self.enc4 = AvgPoolDenseBlock(128, 128, 4)
+        self.enc5 = AvgPoolDenseBlock(128, 128, 4)
+        self.enc6 = AvgPoolDenseBlock(128, 128, 4)
+        self.enc7 = AvgPoolDenseBlock(128, 128, 4)
+        self.enc8 = AvgPoolDenseBlock(128, 128, 4)
+        
+        self.bridge = ConvBlock(128, 128)
+        
 
-def valid_leaderboard(output, target):
-    # L2 loss
-    return leaderboard_loss(output[0], target)
+        self.enc_t = nn.Conv2d(128, 128, 3, stride=2, padding=1)
+        self.conv_t = nn.Conv2d(128, 128, 1)
+        self.codebook_t = VQEmbedding(512, 128)
+        # self.dec_t = nn.ConvTranspose2d(128, 128, [3,4], stride=2, padding=1)
+        self.dec_t = nn.Sequential(
+            nn.ConvTranspose2d(128, 128, kernel_size=[3,4], stride=2, padding=1),
+            nn.ELU(inplace=True),
+            nn.ConvTranspose2d(128, 128, kernel_size=[3,4], stride=2, padding=1),
+            nn.ELU(inplace=True),
+            nn.ConvTranspose2d(128, 128, kernel_size=3, stride=2, padding=1),
+            nn.ELU(inplace=True),
+            nn.ConvTranspose2d(128, 128, kernel_size=[3,4], stride=2, padding=1),
+            nn.ELU(inplace=True),
+        )
+        # self.dec_t = Decoder(64, 64, 128, 2, 32, 2)
+        # self.upsample_t = nn.ConvTranspose2d(128, 128, [3,4], stride=2, padding=1)
+        self.conv_b = nn.Conv2d(128+128, 128, 1)
+        self.codebook_b = VQEmbedding(512, 128)
 
-def VUNetLoss2(output, target):
-    
-    # L2 loss
-    loss_L2 = leaderboard_loss2(output[0], target)
-    
-    # VAE penalty
-    N = target.shape[-1]
-    
-    mu = output[1]
-    log_var = output[2]
-    #loss_KL = ((1 / N) * (torch.exp(z_var) + torch.square(z_mean) - 1. - z_var).sum(dim=-1)).mean()
-    loss_KL = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
-    
-    #if verbose: print(loss_L2, loss_KL)
-    
-    return loss_L2 + 40*loss_KL
-    #return loss_L2 + 4*loss_KL
+        self.dec8 = ConvBlock(128, 128)
 
-def valid_leaderboard2(output, target):
-    # L2 loss
-    return leaderboard_loss2(output[0], target)
+        self.dec7_1 = UpConvBlock(128, 128)
+        self.dec7_2 = ConvBlock(128+128, 128)
+        self.dec6_1 = UpConvBlock(128, 128)
+        self.dec6_2 = ConvBlock(128+128, 128)
+        self.dec5_1 = UpConvBlock(128, 128)
+        self.dec5_2 = ConvBlock(128+128, 128)
+        self.dec4_1 = UpConvBlock(128, 128)
+        self.dec4_2 = ConvBlock(128+128, 128)
+        self.dec3_1 = UpConvBlock(128, 128)
+        self.dec3_2 = ConvBlock(128+128, 128)
+        self.dec2_1 = UpConvBlock(128, 128)
+        self.dec2_2 = ConvBlock(128+96, 128)
+        self.dec1_1 = UpConvBlock(128, 128)
+        self.dec1_2 = ConvBlock(128+64, 128)
+        
+        self.out_1 = nn.Conv2d(128, out_channels, 3, stride=1, padding=1)
+        #self.out_2 = nn.Sigmoid()
+          
+    def forward(self, x):
+        #self.counter = self.counter +1.0
+        #x0 = x[:,:108,...]               # 4, 108, 495, 436
+        #s = x[:,108:115,...]             # 4, 7, 495, 436
+        #t = x[:,115,...].unsqueeze(1)    # 4, 1, 495, 436
+        N, C, H, W = x.shape            # 4, 108, 495, 436
+        #x0r = x0.reshape(N, 9, 12, H, W) # 4, 9, 12, 495, 436
+        #x0_mean = x0r.mean(dim=2)        # 4, 9, 495, 436
+        #x0_std = x0r.std(dim=2)
+        #x0_rng = x0r.max(dim=2).values - x0r.min(dim=2).values
+        
+        #x = torch.cat([x0, x0_mean, x0_std, x0_rng, s, t], dim=1)
+        #x = x / 255.
+        
+        x1 = self.enc1(x)
+        x2 = self.enc2(x1)
+        x3 = self.enc3(x2)
+        x4 = self.enc4(x3)
+        x5 = self.enc5(x4)
+        x6 = self.enc6(x5)
+        x7 = self.enc7(x6)
+        x8 = self.enc8(x7)
+        
+        enc_b = x4
+        z_e_x_t = self.conv_t(x8)
+        z_q_x_st_t, z_q_x_t = self.codebook_t.straight_through(z_e_x_t)
 
-def kl_loss(output, target):
-    kl_anneal = torch.sigmoid(-12 + 24*(output[3]/(1384*6)))
-    #print(kl_anneal)
-    # L2 loss
-    mu = output[1]
-    log_var = output[2]
-    #loss_KL = ((1 / N) * (torch.exp(z_var) + torch.square(z_mean) - 1. - z_var).sum(dim=-1)).mean()
-    loss_KL = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
-    return loss_KL
+        dec_t = self.dec_t(z_q_x_st_t)
+        
+        # print(enc_b.shape, dec_t.shape)
+
+        dec_b = torch.cat([dec_t, enc_b], dim=1)
+        z_e_x_b = self.conv_b(dec_b)
+        z_q_x_st_b, z_q_x_b = self.codebook_b.straight_through(z_e_x_b)
+
+
+        x100 = self.dec8(z_q_x_st_t) # feed in top latent 
+        x107 = self.dec7_2(self.dec7_1(x100, x7))
+        x106 = self.dec6_2(self.dec6_1(x107, x6))
+        x105 = self.dec5_2(self.dec5_1(x106, x5))
+        # x105 = self.dec5_2(self.dec5_1(x106, x5))
+        x104 = self.dec4_2(self.dec4_1(x105, z_q_x_st_b)) # concat bottom latent
+        x103 = self.dec3_2(self.dec3_1(x104, x3))
+        x102 = self.dec2_2(self.dec2_1(x103, x2))
+        x101 = self.dec1_2(self.dec1_1(x102, x1))
+        
+        #out = self.out_2(self.out_1(x101))*255.
+        out = self.out_1(x101)
+        
+        # recover time dimension
+        out = out.view(-1, self.out_channels, out.shape[-2], out.shape[-1])
+        
+        # clamp 'asii_turb_trop_prob'
+        # out[:,:,2,...] = 0.003 + (0.997 - 0.003) * torch.sigmoid(out[:,:,2,...])
+        
+        return out, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t
+        #return out.view(N, self.out_channels, H, W), z_mean, z_logvar, self.counter
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-5, weight_decay=1e-6)
+        StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2000], gamma=0.5)
+        optim_dict = {'optimizer': optimizer, 'lr_scheduler': StepLR}
+        return optim_dict
+
+    def training_step(self, train_batch, batch_idx):
+        x, y = train_batch
+        x_hat, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t  = self.forward(x)
+        loss_recons = F.mse_loss(x_hat, y)
+        loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
+        loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
+        loss = loss_recons + 80*(loss_vq + 1.0 * loss_commit)
+        self.log('train_loss', loss)
+        self.log('train_mse_loss', loss_recons)
+        # self.logger.experiment.add_image('Train/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
+        # self.logger.experiment.add_image('Train/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
+        return loss
+    
+    def validation_step(self, val_batch, batch_idx):
+        x, y = val_batch
+        x_hat, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t  = self.forward(x)
+        loss_recons = F.mse_loss(x_hat, y)
+        loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
+        loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
+        loss = loss_recons + 80*(loss_vq + 1.0 * loss_commit)
+        self.log('val_loss', loss)
+        self.log('val_mse_loss', loss_recons)
+        # self.logger.experiment.add_image('Validate/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
+        # self.logger.experiment.add_image('Validate/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
+    
+    def test_step(self, test_batch, batch_idx):
+        x, y = test_batch
+        x_hat, z_e_x_b, z_q_x_b, z_e_x_t, z_q_x_t  = self.forward(x)
+        loss_recons = F.mse_loss(x_hat, y)
+        loss_vq = F.mse_loss(z_q_x_b, z_e_x_b.detach()) + F.mse_loss(z_q_x_t, z_e_x_t.detach())
+        loss_commit = F.mse_loss(z_e_x_b, z_q_x_b.detach()) + F.mse_loss(z_e_x_t, z_q_x_t.detach())
+        loss = loss_recons + loss_vq + 1.0 * loss_commit
+        self.log('test_loss', loss)
+        self.log('test_mse_loss', loss_recons)
+        # self.logger.experiment.add_image('Test/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
+        # self.logger.experiment.add_image('Test/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))

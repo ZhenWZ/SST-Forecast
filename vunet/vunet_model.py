@@ -2,6 +2,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import pytorch_lightning as pl
 
 ############################################################################################
 
@@ -76,7 +77,7 @@ class UpConvBlock(nn.Module):
 
 ############################################################################################
 
-class Net1(nn.Module):
+class Net1(pl.LightningModule):
     def __init__(self, in_channels=12, out_channels=12):
         super().__init__()
         self.in_channels = in_channels
@@ -94,7 +95,7 @@ class Net1(nn.Module):
         
         self.bridge = ConvBlock(128, 128)
         
-        self.var = VDrawBlock(128*2*2, 128*2*2)
+        self.var = VDrawBlock(128*3*4, 128*3*4)
         
         #self.dec8 = ConvBlock(128, 128)
         
@@ -143,7 +144,7 @@ class Net1(nn.Module):
         
         x100 = torch.flatten(x100, start_dim=1)
         x100, z_mean, z_logvar  = self.var(x100)
-        x100 = x100.view(N, -1, 2, 2)
+        x100 = x100.view(N, -1, 3, 4)
         #x100 = self.dec8(x100)
         
         x107 = self.dec7_2(self.dec7_1(x100, x7))
@@ -165,6 +166,36 @@ class Net1(nn.Module):
         
         return out, z_mean, z_logvar
         #return out.view(N, self.out_channels, H, W), z_mean, z_logvar, self.counter
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=2e-4, weight_decay=2e-6)
+        StepLR = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[2000], gamma=0.5)
+        optim_dict = {'optimizer': optimizer, 'lr_scheduler': StepLR}
+        return optim_dict
+
+    def training_step(self, train_batch, batch_idx):
+        x, y = train_batch
+        x_hat, mean, logvar = self.forward(x)
+        loss_recons = F.mse_loss(x_hat, y)
+        loss_KL = torch.mean(-0.5 * torch.sum(1 + logvar - mean ** 2 - logvar.exp(), dim = 1), dim = 0)
+        loss = loss_recons + 40*loss_KL
+        self.log('train_loss', loss)
+        self.log('train_mse', loss_recons)
+        # self.logger.experiment.add_image('Train/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
+        # self.logger.experiment.add_image('Train/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
+        return loss
+
+    def validation_step(self, val_batch, batch_idx):
+        x, y = val_batch
+        x_hat, mean, logvar = self.forward(x)
+        loss_recons = F.mse_loss(x_hat, y)
+        loss_KL = torch.mean(-0.5 * torch.sum(1 + logvar - mean ** 2 - logvar.exp(), dim = 1), dim = 0)
+        loss = loss_recons + 40*loss_KL
+        self.log('val_loss', loss)
+        self.log('val_mse', loss_recons)
+        # self.logger.experiment.add_image('Validate/Preds', torchvision.utils.make_grid(x_hat, nrow=4, normalize=True))
+        # self.logger.experiment.add_image('Validate/GroundTruth', torchvision.utils.make_grid(y, nrow=4, normalize=True))
+    
 
 def logit(x):
     return torch.log(x / (1. - x))

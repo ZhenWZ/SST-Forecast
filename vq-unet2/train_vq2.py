@@ -7,7 +7,7 @@ from collections.abc import Iterable
 from data_utils import *
 import pytorch_lightning as pl
 from torch.utils.data import DataLoader
-from vq2_model import VQ_Unet
+from vq2_model import VQ_Unet, VQ_Unet2
 
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger, CSVLogger
@@ -33,11 +33,11 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=6, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args.batch_size, num_workers=6, shuffle=False)
 
-    model = VQ_Unet(in_channels=args.in_channels,out_channels=args.out_channels)
+    model = VQ_Unet2(in_channels=args.in_channels,out_channels=args.out_channels)
     logger = TensorBoardLogger("log", name=args.log_name)
     callbacks = [
         EarlyStopping(monitor='val_mse_loss', patience=10, mode='min', check_on_train_epoch_end=False), 
-        ModelCheckpoint(dirpath=args.checkpoint_name, filename='vq2-16-4-5-{epoch:02d}-{val_loss:.2f}', monitor='val_mse_loss', mode='min', save_top_k=5, verbose=True)
+        ModelCheckpoint(dirpath=args.checkpoint_name, filename='vq2-16-4-5-x4-loss80-0-{epoch:02d}-{val_loss:.2f}', monitor='val_mse_loss', mode='min', save_top_k=5, verbose=True)
         ]
     trainer = pl.Trainer(gpus=1, callbacks=callbacks, logger=logger, max_epochs=80)
     trainer.fit(model, train_loader, val_loader)

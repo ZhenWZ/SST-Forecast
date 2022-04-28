@@ -13,7 +13,7 @@ class MyDataset(Dataset):
         self.dataset = h5py.File(self.root, 'r')['samples']
         self.steps = steps
         self.channel_length = in_channels + out_channels
-        self.split_idx = int(self.dataset.shape[0]*0.8)
+        self.split_idx = int(self.dataset.shape[0]*0.9)
         # self.test_split_idx = int(self.dataset.shape[0]*0.9)
         self.data_min_ = 17.
         self.data_max_ = 32.
