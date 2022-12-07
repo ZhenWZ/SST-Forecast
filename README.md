@@ -1,4 +1,4 @@
-# V-Unet for Sea Surface Temperature Forecast
+# Hierarchical Vector Quantized Variational U-Net for Sea Surface Temperature Forecast
 
 ## Model
 
