@@ -6,7 +6,7 @@ We proposed a Hierarchical Vector Quantized Variational U-Net model for sea surf
 
 ![Model](https://user-images.githubusercontent.com/48997918/206292698-3e4900e2-a436-46e9-93ba-847d23ebc832.png)
 
-Our model is a improvement of the V-Unet model implemented in [this repository](https://github.com/iarai/weather4cast#weather4cast-multi-sensor-weather-forecasting-competition--benchmark-dataset). 
+Our model is based on the V-Unet model implemented in [this repository](https://github.com/iarai/weather4cast#weather4cast-multi-sensor-weather-forecasting-competition--benchmark-dataset). 
 
 ## Experiments
 
